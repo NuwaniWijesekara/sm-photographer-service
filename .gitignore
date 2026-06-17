@@ -1,0 +1,194 @@
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+locenv/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+*.tar.gz
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+*.pyc
+
+# ============================================
+# Docker
+# ============================================
+docker-compose.override.yml
+*.pid
+docker-compose.*.yml
+!.dockerignore
+.dockerignore
+
+# Docker volumes (local data)
+postgres_data/
+redis_data/
+uploads/
+local_uploads/
+*.vhdx
+
+# ============================================
+# IDE / Editor
+# ============================================
+# VSCode
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+*.code-workspace
+.history/
+
+# IntelliJ / PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+*.swp
+*.swo
+*~
+
+# ============================================
+# OS / System
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.bak
+*.log
+*.tmp
+*.temp
+*.cache
+*.swp
+desktop.ini
+$RECYCLE.BIN/
+
+# ============================================
+# Application Specific
+# ============================================
+# Uploaded files (local storage)
+uploads/
+local_uploads/
+temp_uploads/
+
+# Logs
+logs/
+*.log
+log/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Secrets
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+credentials.json
+service-account.json
+*.secret
+google-credentials.json
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+celeryd.pid
+
+# Redis
+dump.rdb
+appendonly.aof
+
+# AWS
+.aws/
+
+# Google Drive token
+token.pickle
+drive_token.json
+
+# Face recognition models (large files)
+~/.insightface/
+*.onnx
+*.pth
+*.pt
+
+# ============================================
+# Testing / Coverage
+# ============================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ============================================
+# Backup files
+# ============================================
+*.backup
+*.old
+*.orig
+*.rej
+
+# ============================================
+# ML / AI models
+# ============================================
+models/
+*.pkl
+*.joblib
+*.h5
+*.pb
+
+# ============================================
+# Profile data
+# ============================================
+.prof
+*.prof
+
+# ============================================
+# Environment example file (keep template)
+# ============================================
+!.env.example
+
+# ============================================
+# Database migrations
+# ============================================
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
