@@ -10,3 +10,5 @@ passlib[bcrypt]
 pydantic
 pydantic-settings
 pyjwt
+pgvector
+email-validator
