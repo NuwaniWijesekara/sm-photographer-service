@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     redis_url:          str = "redis://redis:6379/0"
     jwt_secret:         str = "change_me_in_production"
     jwt_algorithm:      str = "HS256"
+    aws_access_key_id:    str
+    aws_secret_access_key: str
+    aws_region:           str = "eu-north-1"
+    s3_bucket_name:       str
     jwt_expire_minutes: int = 10080
     frontend_origin:    str = "http://localhost:3000"
 
