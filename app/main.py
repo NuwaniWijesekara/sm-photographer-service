@@ -14,7 +14,7 @@ from .config.settings import settings
 # ── DB setup ──────────────────────────────────────────────────
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, DateTime, Enum as SAEnum, ForeignKey, Integer
+from sqlalchemy import Column, String, DateTime, Enum as SAEnum, ForeignKey, Integer, JSON
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import relationship
 import uuid, enum
@@ -50,6 +50,7 @@ class Event(Base):
     photographer_id = Column(String, ForeignKey("users.id"), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
     total_photos    = Column(Integer, default=0)
+    failed_files    = Column(JSON, nullable=True)
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
 
@@ -60,9 +61,18 @@ class Image(Base):
     s3_url         = Column(String, nullable=False)
     thumbnail_url  = Column(String, nullable=True)
     filename       = Column(String, nullable=False)
-    face_embedding = Column(Vector(512), nullable=True)
     created_at     = Column(DateTime, default=datetime.utcnow)
     event          = relationship("Event", back_populates="images")
+    faces          = relationship("Face", back_populates="image", cascade="all, delete-orphan")
+
+class Face(Base):
+    """One row per detected face — embedding only, indexable for ANN search."""
+    __tablename__ = "faces"
+    id             = Column(String, primary_key=True, default=_uuid)
+    image_id       = Column(String, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
+    embedding      = Column(Vector(512), nullable=False)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    image          = relationship("Image", back_populates="faces")
 
 engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=10, max_overflow=20)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
