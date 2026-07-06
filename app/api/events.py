@@ -78,16 +78,27 @@ def update_event(
     event_id: str, event_data: EventUpdate,
     db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)
 ):
-    from ..main import Event, redis_client
+    from ..main import Event, EventStatus, Image, redis_client
     event = db.query(Event).filter(Event.id == event_id, Event.photographer_id == user_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    
+    drive_url_changed = event.drive_url != event_data.drive_url
+    
     event.name = event_data.name
-    event.drive_url = event_data.drive_url
+    if drive_url_changed:
+        event.drive_url = event_data.drive_url
+        event.status = EventStatus.PENDING
+        # Clear out existing images as we are ingesting a new folder
+        db.query(Image).filter(Image.event_id == event_id).delete()
+        
     db.commit()
     db.refresh(event)
-    # Re-trigger ingestion on drive_url change
-    _publish_ingest(redis_client, event.id, event_data.drive_url)
+    
+    # Only re-trigger ingestion if the drive_url has actually changed
+    if drive_url_changed and event.drive_url:
+        _publish_ingest(redis_client, event.id, event.drive_url)
+        
     return _event_to_response(event)
 
 @router.delete("/{event_id}")
