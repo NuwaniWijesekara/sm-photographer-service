@@ -12,3 +12,5 @@ pydantic-settings
 pyjwt
 pgvector
 email-validator
+boto3
+pillow-heif
