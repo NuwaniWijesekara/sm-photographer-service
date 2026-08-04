@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid, json
@@ -28,16 +29,43 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(bear
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+import logging
+logger = logging.getLogger(__name__)
+
 def _publish_ingest(redis_client, event_id: str, drive_url: str):
     """Publish photo.ingest event to Redis Stream."""
-    redis_client.xadd("photo.ingest", {"event_id": event_id, "drive_url": drive_url})
+    try:
+        redis_client.xadd("photo.ingest", {"event_id": event_id, "drive_url": drive_url})
+    except Exception as e:
+        logger.error(f"Failed to publish ingest to Redis Stream: {e}")
 
 def _event_to_response(e) -> EventResponse:
     return EventResponse(
         id=e.id, name=e.name, date=e.date, drive_url=e.drive_url,
-        cover_photo_url=e.cover_photo_url, qr_token=e.qr_token,
+        cover_photo_url=e.cover_photo_url, qr_token=e.qr_token, username=e.username,
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at
     )
+
+@router.get("/check-username")
+def check_username(
+    username: str,
+    exclude_event_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    from ..main import Event
+    clean_username = username.strip().lower().lstrip('@')
+    if not clean_username:
+        return {"available": True, "message": ""}
+    
+    query = db.query(Event).filter(Event.username == clean_username)
+    if exclude_event_id:
+        query = query.filter(Event.id != exclude_event_id)
+    
+    existing = query.first()
+    if existing:
+        return {"available": False, "message": "Username is already taken"}
+    return {"available": True, "message": "Username is available!"}
 
 @router.post("/", response_model=EventResponse)
 def create_event(
@@ -46,10 +74,18 @@ def create_event(
     user_id: str = Depends(get_current_user_id)
 ):
     from ..main import Event, EventStatus, redis_client
+    clean_username = event_data.username.strip().lower().lstrip('@') if event_data.username else None
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Collection username is required.")
+
+    existing = db.query(Event).filter(Event.username == clean_username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Collection username already taken. Please choose another.")
+
     qr_token = f"{event_data.name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:8]}"
     event = Event(
         name=event_data.name, date=datetime.now(),
-        drive_url=event_data.drive_url, qr_token=qr_token,
+        drive_url=event_data.drive_url, qr_token=qr_token, username=clean_username,
         photographer_id=user_id, status=EventStatus.PENDING, total_photos=0
     )
     db.add(event)
@@ -83,9 +119,19 @@ def update_event(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
+    clean_username = event_data.username.strip().lower().lstrip('@') if event_data.username else None
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Collection username is required.")
+
+    if clean_username != event.username:
+        existing = db.query(Event).filter(Event.username == clean_username).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Collection username already taken. Please choose another.")
+
     drive_url_changed = event.drive_url != event_data.drive_url
 
     event.name = event_data.name
+    event.username = clean_username
     if drive_url_changed:
         event.drive_url = event_data.drive_url
         event.status = EventStatus.PENDING

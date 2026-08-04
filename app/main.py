@@ -46,6 +46,7 @@ class Event(Base):
     drive_url       = Column(String, nullable=True)
     cover_photo_url = Column(String, nullable=True)
     qr_token        = Column(String, unique=True, nullable=False, index=True)
+    username        = Column(String, unique=True, nullable=True, index=True)
     status          = Column(SAEnum(EventStatus), default=EventStatus.PENDING, nullable=False)
     photographer_id = Column(String, ForeignKey("users.id"), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
@@ -83,6 +84,8 @@ redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
 async def lifespan(app: FastAPI):
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS username VARCHAR(255);"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_events_username ON events (username) WHERE username IS NOT NULL;"))
         conn.commit()
     Base.metadata.create_all(bind=engine)
     print("✓ Photographer service running on :8001")
