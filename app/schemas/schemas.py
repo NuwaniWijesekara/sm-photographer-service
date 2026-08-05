@@ -13,10 +13,12 @@ class Token(BaseModel):
 class EventCreate(BaseModel):
     name: str
     drive_url: str
+    username: str
 
 class EventUpdate(BaseModel):
     name: str
     drive_url: str
+    username: str
 
 class EventResponse(BaseModel):
     id: str
@@ -25,6 +27,7 @@ class EventResponse(BaseModel):
     drive_url: Optional[str] = None
     cover_photo_url: Optional[str] = None
     qr_token: str
+    username: Optional[str] = None
     status: str
     total_photos: int
     created_at: datetime
