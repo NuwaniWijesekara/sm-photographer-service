@@ -39,10 +39,13 @@ def _publish_ingest(redis_client, event_id: str, drive_url: str):
     except Exception as e:
         logger.error(f"Failed to publish ingest to Redis Stream: {e}")
 
+from ..services.s3 import s3_service
+
 def _event_to_response(e) -> EventResponse:
+    cover_url = s3_service.generate_presigned_url(e.cover_photo_url, expiration=3600) if e.cover_photo_url else None
     return EventResponse(
         id=e.id, name=e.name, date=e.date, drive_url=e.drive_url,
-        cover_photo_url=e.cover_photo_url, qr_token=e.qr_token, username=e.username,
+        cover_photo_url=cover_url, qr_token=e.qr_token, username=e.username,
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at
     )
 

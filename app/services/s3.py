@@ -1,40 +1,98 @@
-import io, boto3
+import io, os, logging, boto3
+from botocore.config import Config
+from urllib.parse import urlparse
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 from ..config.settings import settings
 
 register_heif_opener()
-
+logger = logging.getLogger(__name__)
 
 class S3Service:
     def __init__(self):
+        region = (
+            getattr(settings, 'aws_region', None)
+            or os.getenv('AWS_REGION')
+            or 'ap-south-1'
+        )
+        access_key = (
+            getattr(settings, 'aws_access_key_id', None)
+            or os.getenv('AWS_ACCESS_KEY_ID')
+        )
+        secret_key = (
+            getattr(settings, 'aws_secret_access_key', None)
+            or os.getenv('AWS_SECRET_ACCESS_KEY')
+        )
+        self.bucket = (
+            getattr(settings, 's3_bucket_name', None)
+            or getattr(settings, 'aws_s3_bucket_name', None)
+            or os.getenv('AWS_S3_BUCKET_NAME')
+            or os.getenv('S3_BUCKET_NAME')
+            or ''
+        )
+
+        endpoint_url = f"https://s3.{region}.amazonaws.com"
+
         self.client = boto3.client(
             's3',
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-            region_name=settings.aws_region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name=region,
+            endpoint_url=endpoint_url,
+            config=Config(
+                signature_version='s3v4',
+                s3={'addressing_style': 'virtual'}
+            )
         )
-        self.bucket = settings.s3_bucket_name
-  
+
+    def _extract_key(self, url_or_key: str) -> str:
+        if not url_or_key:
+            return ""
+        if "events/" in url_or_key:
+            return "events/" + url_or_key.split("events/", 1)[1]
+        if url_or_key.startswith("http://") or url_or_key.startswith("https://"):
+            return urlparse(url_or_key).path.lstrip('/')
+        return url_or_key.lstrip('/')
+
     def _url_to_key(self, url: str) -> str:
-        prefix = f"{self.bucket}.s3.{settings.aws_region}.amazonaws.com/"
-        return url.split(prefix)[-1]
+        return self._extract_key(url)
 
     def delete_object(self, url: str):
         """Delete a single object given its full S3 URL."""
         if not url:
             return
-        self.client.delete_object(Bucket=self.bucket, Key=self._url_to_key(url))
+        self.client.delete_object(Bucket=self.bucket, Key=self._extract_key(url))
 
     def delete_objects(self, urls: list[str]):
         """Batch delete — S3 allows up to 1000 keys per delete_objects call."""
         urls = [u for u in urls if u]
         if not urls:
             return
-        keys = [{"Key": self._url_to_key(u)} for u in urls]
+        keys = [{"Key": self._extract_key(u)} for u in urls]
         for i in range(0, len(keys), 1000):
             batch = keys[i:i + 1000]
             self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
+
+    def generate_presigned_url(self, url_or_key: str | None, expiration: int = 3600) -> str | None:
+        if not url_or_key:
+            return None
+        
+        extracted_key = self._extract_key(url_or_key)
+        bucket_name = (
+            self.bucket
+            or os.getenv('AWS_S3_BUCKET_NAME')
+            or os.getenv('S3_BUCKET_NAME')
+        )
+
+        try:
+            return self.client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': extracted_key},
+                ExpiresIn=expiration
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URL for key '{extracted_key}' in bucket '{bucket_name}': {e}")
+            return url_or_key
 
 
 s3_service = S3Service()

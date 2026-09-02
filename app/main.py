@@ -15,7 +15,6 @@ from .config.settings import settings
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import Column, String, DateTime, Enum as SAEnum, ForeignKey, Integer, JSON
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import relationship
 import uuid, enum
 from datetime import datetime
@@ -67,13 +66,13 @@ class Image(Base):
     faces          = relationship("Face", back_populates="image", cascade="all, delete-orphan")
 
 class Face(Base):
-    """One row per detected face — embedding only, indexable for ANN search."""
+    """One row per detected face — stores AWS Rekognition FaceId."""
     __tablename__ = "faces"
-    id             = Column(String, primary_key=True, default=_uuid)
-    image_id       = Column(String, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
-    embedding      = Column(Vector(512), nullable=False)
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    image          = relationship("Image", back_populates="faces")
+    id                  = Column(String, primary_key=True, default=_uuid)
+    image_id            = Column(String, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
+    rekognition_face_id = Column(String, nullable=False, index=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    image               = relationship("Image", back_populates="faces")
 
 engine = create_engine(settings.database_url, pool_pre_ping=True, pool_size=10, max_overflow=20)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -83,9 +82,11 @@ redis_client = redis_lib.from_url(settings.redis_url, decode_responses=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS username VARCHAR(255);"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_events_username ON events (username) WHERE username IS NOT NULL;"))
+        conn.execute(text("ALTER TABLE faces ADD COLUMN IF NOT EXISTS rekognition_face_id VARCHAR(255);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_faces_rekognition_face_id ON faces (rekognition_face_id);"))
+        conn.execute(text("ALTER TABLE faces DROP COLUMN IF EXISTS embedding;"))
         conn.commit()
     Base.metadata.create_all(bind=engine)
     print("✓ Photographer service running on :8001")
