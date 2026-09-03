@@ -1,6 +1,6 @@
 import io, os, logging, boto3
 from botocore.config import Config
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 from ..config.settings import settings
@@ -48,11 +48,14 @@ class S3Service:
     def _extract_key(self, url_or_key: str) -> str:
         if not url_or_key:
             return ""
-        if "events/" in url_or_key:
-            return "events/" + url_or_key.split("events/", 1)[1]
-        if url_or_key.startswith("http://") or url_or_key.startswith("https://"):
-            return urlparse(url_or_key).path.lstrip('/')
-        return url_or_key.lstrip('/')
+        clean_url = url_or_key.split('?')[0]
+        if "events/" in clean_url:
+            key = "events/" + clean_url.split("events/", 1)[1]
+        elif clean_url.startswith("http://") or clean_url.startswith("https://"):
+            key = urlparse(clean_url).path.lstrip('/')
+        else:
+            key = clean_url.lstrip('/')
+        return unquote(key)
 
     def _url_to_key(self, url: str) -> str:
         return self._extract_key(url)
