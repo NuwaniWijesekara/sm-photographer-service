@@ -12,5 +12,6 @@ class Settings(BaseSettings):
     s3_bucket_name:       str
     jwt_expire_minutes: int = 10080
     frontend_origin:    str = "http://localhost:3000"
+    api_gateway_url:    str = "http://api-gateway:8000"
 
 settings = Settings()

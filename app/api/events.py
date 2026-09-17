@@ -4,12 +4,23 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid, json
+import httpx
 from jose import JWTError, jwt
 from ..config.settings import settings
 from ..schemas.schemas import EventCreate, EventUpdate, EventResponse
 
 router = APIRouter(prefix="/events", tags=["Event Management"])
 bearer = HTTPBearer()
+
+# Applied whenever a photographer has no active subscription (never
+# subscribed, or their subscription lapsed) — same cap as the seeded "Free"
+# package in sm-subscription-service.
+FREE_TIER_MAX_EVENTS = 3
+
+# Short timeout: this check sits in the POST /events critical path, so a slow
+# or unreachable subscription-service should fail fast into the fallback
+# below rather than hang the request.
+_SUBSCRIPTION_LOOKUP_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
 
 def get_db():
     from ..main import SessionLocal
@@ -38,6 +49,56 @@ def _publish_ingest(redis_client, event_id: str, drive_url: str):
         redis_client.xadd("photo.ingest", {"event_id": event_id, "drive_url": drive_url})
     except Exception as e:
         logger.error(f"Failed to publish ingest to Redis Stream: {e}")
+
+async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[int]:
+    """
+    Look up the caller's `max_events` cap from their active subscription's
+    package, via the API Gateway (never the subscription-service directly —
+    it's not on this service's network in every deployment, the gateway is).
+
+    Returns None for "unlimited". Falls back to FREE_TIER_MAX_EVENTS whenever
+    we can't get a confident answer — no active subscription (404), a
+    malformed/unexpected response, or the subscription-service being slow or
+    down — so a downstream hiccup degrades to the safe default instead of
+    blocking every photographer from creating events.
+    """
+    url = f"{settings.api_gateway_url}/api/v1/subscriptions/{user_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_SUBSCRIPTION_LOOKUP_TIMEOUT) as client:
+            response = await client.get(url, headers={"Authorization": authorization})
+    except httpx.HTTPError as e:
+        logger.warning(f"Subscription lookup failed for user {user_id}: {e}")
+        return FREE_TIER_MAX_EVENTS
+
+    if response.status_code == 404:
+        # No subscription on record at all — treat as Free Tier.
+        return FREE_TIER_MAX_EVENTS
+
+    if response.status_code != 200:
+        logger.warning(
+            f"Subscription lookup for user {user_id} returned {response.status_code}: {response.text[:200]}"
+        )
+        return FREE_TIER_MAX_EVENTS
+
+    try:
+        subscriptions = response.json()
+    except ValueError:
+        logger.warning(f"Subscription lookup for user {user_id} returned non-JSON body")
+        return FREE_TIER_MAX_EVENTS
+
+    active_subscription = next(
+        (s for s in subscriptions if isinstance(s, dict) and s.get("status") == "active"),
+        None,
+    )
+    if not active_subscription:
+        return FREE_TIER_MAX_EVENTS
+
+    package = active_subscription.get("package") or {}
+    limits = package.get("limits") or {}
+    photographer_limits = limits.get("photographer_limits") or {}
+    # .get(..., default) only falls back when the key is *missing* — an
+    # explicit `null` (unlimited) is returned as None, exactly as intended.
+    return photographer_limits.get("max_events", FREE_TIER_MAX_EVENTS)
 
 from ..services.s3 import s3_service
 
@@ -71,15 +132,30 @@ def check_username(
     return {"available": True, "message": "Username is available!"}
 
 @router.post("/", response_model=EventResponse)
-def create_event(
+async def create_event(
     event_data: EventCreate,
     db: Session = Depends(get_db),
-    user_id: str = Depends(get_current_user_id)
+    user_id: str = Depends(get_current_user_id),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
 ):
     from ..main import Event, EventStatus, redis_client
     clean_username = event_data.username.strip().lower().lstrip('@') if event_data.username else None
     if not clean_username:
         raise HTTPException(status_code=400, detail="Collection username is required.")
+
+    # Subscription-service authenticates this same JWT and requires the
+    # user_id in the URL to match its own `sub` claim, so we forward the
+    # caller's own token rather than minting a new one.
+    max_events = await _get_max_events_limit(
+        user_id, authorization=f"{credentials.scheme} {credentials.credentials}"
+    )
+    if max_events is not None:
+        current_event_count = db.query(Event).filter(Event.photographer_id == user_id).count()
+        if current_event_count >= max_events:
+            raise HTTPException(
+                status_code=403,
+                detail="Event limit reached. Please upgrade your package to create more events.",
+            )
 
     existing = db.query(Event).filter(Event.username == clean_username).first()
     if existing:
