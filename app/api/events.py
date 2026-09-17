@@ -12,11 +12,6 @@ from ..schemas.schemas import EventCreate, EventUpdate, EventResponse
 router = APIRouter(prefix="/events", tags=["Event Management"])
 bearer = HTTPBearer()
 
-# Applied whenever a photographer has no active subscription (never
-# subscribed, or their subscription lapsed) — same cap as the seeded "Free"
-# package in sm-subscription-service.
-FREE_TIER_MAX_EVENTS = 3
-
 # Short timeout: this check sits in the POST /events critical path, so a slow
 # or unreachable subscription-service should fail fast into the fallback
 # below rather than hang the request.
@@ -56,11 +51,19 @@ async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[in
     package, via the API Gateway (never the subscription-service directly —
     it's not on this service's network in every deployment, the gateway is).
 
-    Returns None for "unlimited". Falls back to FREE_TIER_MAX_EVENTS whenever
-    we can't get a confident answer — no active subscription (404), a
-    malformed/unexpected response, or the subscription-service being slow or
-    down — so a downstream hiccup degrades to the safe default instead of
-    blocking every photographer from creating events.
+    subscription-service now always resolves to an active subscription for
+    any authenticated user — a real one if they bought a package, otherwise a
+    virtual subscription against whichever package is configured as the Free
+    tier there (see GET /api/v1/subscriptions/{user_id}). So there is no
+    hardcoded numeric fallback here anymore — the Free tier's limits are
+    driven entirely by that package's `limits` in the database, and we just
+    trust whatever comes back.
+
+    Returns None for "unlimited". If the subscription-service can't be
+    reached, times out, or returns something malformed, this fails open
+    (returns None / unlimited) rather than blocking event creation over an
+    unrelated infrastructure hiccup — this check is a soft business-rule
+    limit, not a security boundary.
     """
     url = f"{settings.api_gateway_url}/api/v1/subscriptions/{user_id}"
     try:
@@ -68,37 +71,37 @@ async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[in
             response = await client.get(url, headers={"Authorization": authorization})
     except httpx.HTTPError as e:
         logger.warning(f"Subscription lookup failed for user {user_id}: {e}")
-        return FREE_TIER_MAX_EVENTS
-
-    if response.status_code == 404:
-        # No subscription on record at all — treat as Free Tier.
-        return FREE_TIER_MAX_EVENTS
+        return None
 
     if response.status_code != 200:
         logger.warning(
             f"Subscription lookup for user {user_id} returned {response.status_code}: {response.text[:200]}"
         )
-        return FREE_TIER_MAX_EVENTS
+        return None
 
     try:
         subscriptions = response.json()
     except ValueError:
         logger.warning(f"Subscription lookup for user {user_id} returned non-JSON body")
-        return FREE_TIER_MAX_EVENTS
+        return None
 
     active_subscription = next(
         (s for s in subscriptions if isinstance(s, dict) and s.get("status") == "active"),
         None,
     )
     if not active_subscription:
-        return FREE_TIER_MAX_EVENTS
+        # Shouldn't happen anymore — subscription-service always returns an
+        # active (real or virtual Free) subscription — but if it somehow
+        # doesn't, fail open rather than guess at a number.
+        logger.warning(f"No active subscription (real or virtual) returned for user {user_id}")
+        return None
 
     package = active_subscription.get("package") or {}
     limits = package.get("limits") or {}
     photographer_limits = limits.get("photographer_limits") or {}
-    # .get(..., default) only falls back when the key is *missing* — an
-    # explicit `null` (unlimited) is returned as None, exactly as intended.
-    return photographer_limits.get("max_events", FREE_TIER_MAX_EVENTS)
+    # Missing key or explicit `null` both mean "unlimited" — dict.get with no
+    # default returns None for either.
+    return photographer_limits.get("max_events")
 
 from ..services.s3 import s3_service
 
