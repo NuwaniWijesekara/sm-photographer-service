@@ -150,8 +150,10 @@ app.add_middleware(
 
 from .api.auth import router as auth_router
 from .api.events import router as events_router
+from .api.collaborators import router as collaborators_router
 app.include_router(auth_router)
 app.include_router(events_router)
+app.include_router(collaborators_router)
 
 @app.get("/health")
 def health():

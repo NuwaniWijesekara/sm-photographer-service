@@ -20,7 +20,18 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     from ..main import User
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+        if existing.password_hash:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        # A placeholder row from a collaborator bulk-import (see
+        # api/collaborators.py) — no password yet. Complete it in place so
+        # its id (and any event_collaborators rows already pointing at it)
+        # stay intact, rather than rejecting or creating a second account.
+        existing.password_hash = get_password_hash(user_data.password)
+        if user_data.name:
+            existing.name = user_data.name
+        db.commit()
+        db.refresh(existing)
+        return {"message": "Account created successfully.", "user_id": existing.id}
     user = User(
         email=user_data.email,
         password_hash=get_password_hash(user_data.password),
