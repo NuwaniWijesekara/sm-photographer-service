@@ -3,12 +3,31 @@ from sqlalchemy.orm import Session
 
 from .events import get_db, get_current_user_id
 from ..services.s3 import s3_service
-from ..schemas.schemas import ReferenceFaceResponse
+from ..schemas.schemas import ReferenceFaceResponse, ReferenceFaceStatus
 
 router = APIRouter(prefix="/api/v1/users", tags=["User Profile"])
 
 _ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _MAX_REFERENCE_FACE_BYTES = 10 * 1024 * 1024  # 10MB
+
+
+@router.get("/me/face", response_model=ReferenceFaceStatus)
+def get_reference_face(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Whether the caller has a reference face saved, and a short-lived
+    presigned URL to preview it if so — powers the Profile Settings UI."""
+    from ..main import User
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.reference_face_url:
+        return ReferenceFaceStatus(has_reference_face=False)
+
+    return ReferenceFaceStatus(
+        has_reference_face=True,
+        reference_face_url=s3_service.generate_presigned_url(user.reference_face_url, expiration=3600),
+    )
 
 
 @router.post("/me/face", response_model=ReferenceFaceResponse)

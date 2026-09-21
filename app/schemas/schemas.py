@@ -75,3 +75,7 @@ class BulkImportResponse(BaseModel):
 class ReferenceFaceResponse(BaseModel):
     message: str
     reference_face_url: Optional[str] = None
+
+class ReferenceFaceStatus(BaseModel):
+    has_reference_face: bool
+    reference_face_url: Optional[str] = None
