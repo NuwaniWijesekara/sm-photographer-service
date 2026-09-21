@@ -81,6 +81,12 @@ class AddCollaboratorResponse(BaseModel):
     email: str
     permission: CollaboratorPermission
 
+class CollaboratorResponse(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    permission: CollaboratorPermission
+
 class ReferenceFaceResponse(BaseModel):
     message: str
     reference_face_url: Optional[str] = None

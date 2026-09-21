@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
-from .events import get_db, get_current_user_id
+from .events import get_db, get_current_user_id, _require_admin_access
 from ..services.s3 import s3_service
 from ..schemas.schemas import (
     SharedEventResponse,
@@ -12,6 +12,7 @@ from ..schemas.schemas import (
     BulkCollaboratorResult,
     AddCollaboratorRequest,
     AddCollaboratorResponse,
+    CollaboratorResponse,
     CollaboratorPermission as CollaboratorPermissionSchema,
 )
 
@@ -247,3 +248,68 @@ def add_collaborator(
 
     db.commit()
     return AddCollaboratorResponse(user_id=target_user.id, email=email, permission=permission)
+
+
+@router.get("/{event_id}/collaborators", response_model=list[CollaboratorResponse])
+def list_collaborators(
+    event_id: str,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """All collaborators on this event. Owner or ADMIN collaborators only —
+    a stricter check than add/bulk-add above, since seeing (and removing)
+    the whole access list is more sensitive than being invited onto it."""
+    from ..main import Event, EventCollaborator, User
+
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    _require_admin_access(db, event, user_id)
+
+    rows = (
+        db.query(EventCollaborator, User.email, User.name)
+        .join(User, User.id == EventCollaborator.user_id)
+        .filter(EventCollaborator.event_id == event_id)
+        .order_by(EventCollaborator.created_at.asc())
+        .all()
+    )
+    return [
+        CollaboratorResponse(user_id=link.user_id, email=email, name=name, permission=link.permission.value)
+        for link, email, name in rows
+    ]
+
+
+@router.delete("/{event_id}/collaborators/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_collaborator(
+    event_id: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+    caller_id: str = Depends(get_current_user_id),
+):
+    """Removes one collaborator's access. Owner or ADMIN collaborators only.
+
+    The owner is never a row in event_collaborators (see Event.owner_id),
+    so there's nothing here for them to accidentally remove themselves
+    from — but a caller passing the owner's own id as {user_id} gets a
+    clear 400 instead of a confusing 404.
+    """
+    from ..main import Event, EventCollaborator
+
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    _require_admin_access(db, event, caller_id)
+
+    if user_id == event.owner_id:
+        raise HTTPException(status_code=400, detail="The event owner can't be removed as a collaborator.")
+
+    link = (
+        db.query(EventCollaborator)
+        .filter(EventCollaborator.event_id == event_id, EventCollaborator.user_id == user_id)
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="Collaborator not found")
+
+    db.delete(link)
+    db.commit()
