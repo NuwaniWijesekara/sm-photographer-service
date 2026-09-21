@@ -113,6 +113,45 @@ def _event_to_response(e) -> EventResponse:
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at
     )
 
+def _get_collaborator_permission(db: Session, event_id: str, user_id: str):
+    """The caller's EventCollaborator.permission for this event, or None if
+    they aren't a collaborator on it at all (owners aren't collaborator
+    rows — check event.owner_id separately)."""
+    from ..main import EventCollaborator
+    link = (
+        db.query(EventCollaborator)
+        .filter(EventCollaborator.event_id == event_id, EventCollaborator.user_id == user_id)
+        .first()
+    )
+    return link.permission if link else None
+
+def _require_upload_access(db: Session, event, user_id: str) -> None:
+    """Owner, or a collaborator with CAN_UPLOAD or ADMIN. Raises 403 otherwise.
+
+    This is the closest thing this service has to an "upload photos"
+    permission today: there's no direct photo-upload endpoint yet — photos
+    are ingested by sm-ingestion-worker-service whenever this Drive URL
+    changes (see update_event below), so that's the action CAN_UPLOAD gates.
+    """
+    from ..main import CollaboratorPermission
+    if event.owner_id == user_id:
+        return
+    permission = _get_collaborator_permission(db, event.id, user_id)
+    if permission in (CollaboratorPermission.CAN_UPLOAD, CollaboratorPermission.ADMIN):
+        return
+    raise HTTPException(status_code=403, detail="You don't have upload access to this event.")
+
+def _require_admin_access(db: Session, event, user_id: str) -> None:
+    """Owner, or a collaborator with ADMIN. Raises 403 otherwise — gates
+    destructive actions (deleting the event and everything in it)."""
+    from ..main import CollaboratorPermission
+    if event.owner_id == user_id:
+        return
+    permission = _get_collaborator_permission(db, event.id, user_id)
+    if permission == CollaboratorPermission.ADMIN:
+        return
+    raise HTTPException(status_code=403, detail="You don't have admin access to this event.")
+
 @router.get("/check-username")
 def check_username(
     username: str,
@@ -197,9 +236,10 @@ def update_event(
     db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)
 ):
     from ..main import Event, EventStatus, Image, redis_client
-    event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
+    event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_upload_access(db, event, user_id)
 
     clean_username = event_data.username.strip().lower().lstrip('@') if event_data.username else None
     if not clean_username:
@@ -238,9 +278,10 @@ def delete_event(event_id: str, db: Session = Depends(get_db), user_id: str = De
     import logging
     logger = logging.getLogger(__name__)
 
-    event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
+    event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_admin_access(db, event, user_id)
 
     # 1. Grab URLs before the rows disappear
     images = db.query(Image).filter(Image.event_id == event_id).all()
