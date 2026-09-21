@@ -153,7 +153,7 @@ async def create_event(
         user_id, authorization=f"{credentials.scheme} {credentials.credentials}"
     )
     if max_events is not None:
-        current_event_count = db.query(Event).filter(Event.photographer_id == user_id).count()
+        current_event_count = db.query(Event).filter(Event.owner_id == user_id).count()
         if current_event_count >= max_events:
             raise HTTPException(
                 status_code=403,
@@ -168,7 +168,7 @@ async def create_event(
     event = Event(
         name=event_data.name, date=datetime.now(),
         drive_url=event_data.drive_url, qr_token=qr_token, username=clean_username,
-        photographer_id=user_id, status=EventStatus.PENDING, total_photos=0
+        owner_id=user_id, status=EventStatus.PENDING, total_photos=0
     )
     db.add(event)
     db.commit()
@@ -180,13 +180,13 @@ async def create_event(
 @router.get("/", response_model=list[EventResponse])
 def list_events(db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from ..main import Event
-    events = db.query(Event).filter(Event.photographer_id == user_id).all()
+    events = db.query(Event).filter(Event.owner_id == user_id).all()
     return [_event_to_response(e) for e in events]
 
 @router.get("/{event_id}", response_model=EventResponse)
 def get_event(event_id: str, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from ..main import Event
-    event = db.query(Event).filter(Event.id == event_id, Event.photographer_id == user_id).first()
+    event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return _event_to_response(event)
@@ -197,7 +197,7 @@ def update_event(
     db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)
 ):
     from ..main import Event, EventStatus, Image, redis_client
-    event = db.query(Event).filter(Event.id == event_id, Event.photographer_id == user_id).first()
+    event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -238,7 +238,7 @@ def delete_event(event_id: str, db: Session = Depends(get_db), user_id: str = De
     import logging
     logger = logging.getLogger(__name__)
 
-    event = db.query(Event).filter(Event.id == event_id, Event.photographer_id == user_id).first()
+    event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 

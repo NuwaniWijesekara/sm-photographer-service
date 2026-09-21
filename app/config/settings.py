@@ -13,5 +13,6 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 10080
     frontend_origin:    str = "http://localhost:3000"
     api_gateway_url:    str = "http://api-gateway:8000"
+    google_client_id:   str = ""
 
 settings = Settings()

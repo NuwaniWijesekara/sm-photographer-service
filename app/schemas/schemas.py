@@ -5,6 +5,10 @@ from datetime import datetime
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
+    name: Optional[str] = None
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
 
 class Token(BaseModel):
     access_token: str

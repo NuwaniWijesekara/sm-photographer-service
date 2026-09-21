@@ -13,4 +13,5 @@ pydantic-settings
 pyjwt
 email-validator
 boto3
-pillow-heif
+pillow-heif
+google-auth

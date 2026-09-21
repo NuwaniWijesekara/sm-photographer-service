@@ -14,7 +14,7 @@ from .config.settings import settings
 # ── DB setup ──────────────────────────────────────────────────
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, DateTime, Enum as SAEnum, ForeignKey, Integer, JSON
+from sqlalchemy import Column, String, DateTime, Enum as SAEnum, ForeignKey, Integer, JSON, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 import uuid, enum
 from datetime import datetime
@@ -29,11 +29,22 @@ class EventStatus(str, enum.Enum):
     READY      = "ready"
     FAILED     = "failed"
 
+class CollaboratorPermission(str, enum.Enum):
+    VIEW_ONLY  = "VIEW_ONLY"
+    CAN_UPLOAD = "CAN_UPLOAD"
+    ADMIN      = "ADMIN"
+
 class User(Base):
+    """The single, unified account table — every user (event creator or
+    collaborator) is a row here. `email`/`password_hash` are nullable to
+    accommodate anonymous instant-access sessions, which get a row with
+    neither set."""
     __tablename__ = "users"
     id              = Column(String, primary_key=True, default=_uuid)
-    email           = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    name            = Column(String, nullable=True)
+    email           = Column(String, unique=True, index=True, nullable=True)
+    password_hash   = Column(String, nullable=True)
+    is_anonymous    = Column(Boolean, default=False, nullable=False)
     created_at      = Column(DateTime, default=datetime.utcnow)
     events          = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
 
@@ -47,12 +58,27 @@ class Event(Base):
     qr_token        = Column(String, unique=True, nullable=False, index=True)
     username        = Column(String, unique=True, nullable=True, index=True)
     status          = Column(SAEnum(EventStatus), default=EventStatus.PENDING, nullable=False)
-    photographer_id = Column(String, ForeignKey("users.id"), nullable=True)
+    owner_id        = Column(String, ForeignKey("users.id"), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
     total_photos    = Column(Integer, default=0)
     failed_files    = Column(JSON, nullable=True)
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
+    collaborators   = relationship("EventCollaborator", back_populates="event", cascade="all, delete-orphan")
+
+class EventCollaborator(Base):
+    """Shared access to an event — the owner (see Event.owner_id) can add
+    other users here with a permission level instead of ownership."""
+    __tablename__ = "event_collaborators"
+    id         = Column(String, primary_key=True, default=_uuid)
+    event_id   = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission = Column(SAEnum(CollaboratorPermission), nullable=False, default=CollaboratorPermission.VIEW_ONLY)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    event      = relationship("Event", back_populates="collaborators")
+    user       = relationship("User")
+
+    __table_args__ = (UniqueConstraint("event_id", "user_id", name="uq_event_collaborator"),)
 
 class Image(Base):
     __tablename__ = "images"
@@ -87,6 +113,26 @@ async def lifespan(app: FastAPI):
         conn.execute(text("ALTER TABLE faces ADD COLUMN IF NOT EXISTS rekognition_face_id VARCHAR(255);"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_faces_rekognition_face_id ON faces (rekognition_face_id);"))
         conn.execute(text("ALTER TABLE faces DROP COLUMN IF EXISTS embedding;"))
+
+        # ── Unified User Model migration (Photographers/Guests merge) ──
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT FALSE;"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='hashed_password')
+                THEN ALTER TABLE users RENAME COLUMN hashed_password TO password_hash; END IF;
+            END $$;
+        """))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN email DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='events' AND column_name='photographer_id')
+                THEN ALTER TABLE events RENAME COLUMN photographer_id TO owner_id; END IF;
+            END $$;
+        """))
         conn.commit()
     Base.metadata.create_all(bind=engine)
     print("✓ Photographer service running on :8001")
