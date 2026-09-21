@@ -110,7 +110,8 @@ def _event_to_response(e) -> EventResponse:
     return EventResponse(
         id=e.id, name=e.name, date=e.date, drive_url=e.drive_url,
         cover_photo_url=cover_url, qr_token=e.qr_token, username=e.username,
-        status=e.status.value, total_photos=e.total_photos, created_at=e.created_at
+        status=e.status.value, total_photos=e.total_photos, created_at=e.created_at,
+        owner_id=e.owner_id
     )
 
 def _get_collaborator_permission(db: Session, event_id: str, user_id: str):

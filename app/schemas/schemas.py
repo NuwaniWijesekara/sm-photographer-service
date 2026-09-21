@@ -36,6 +36,7 @@ class EventResponse(BaseModel):
     status: str
     total_photos: int
     created_at: datetime
+    owner_id: Optional[str] = None
 
 # Mirrors app.main.CollaboratorPermission (the SQLAlchemy enum) — kept as an
 # independent definition here, the same way this module avoids importing
@@ -85,4 +86,7 @@ class CollaboratorResponse(BaseModel):
     user_id: str
     email: Optional[str] = None
     name: Optional[str] = None
+    permission: CollaboratorPermission
+
+class UpdateCollaboratorRequest(BaseModel):
     permission: CollaboratorPermission

@@ -13,11 +13,21 @@ from ..schemas.schemas import (
     AddCollaboratorRequest,
     AddCollaboratorResponse,
     CollaboratorResponse,
+    UpdateCollaboratorRequest,
     CollaboratorPermission as CollaboratorPermissionSchema,
 )
 
 router = APIRouter(prefix="/api/v1/events", tags=["Collaborators"])
 logger = logging.getLogger(__name__)
+
+
+def _require_owner(event, user_id: str) -> None:
+    """Strictly the event owner — not even ADMIN collaborators. ADMIN gates
+    content actions (see events.py's _require_admin_access for uploads and
+    deleting the event); who has access and what role they hold is the
+    owner's call alone."""
+    if event.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the event owner can manage collaborator access.")
 
 _VALID_PERMISSIONS = {p.value for p in CollaboratorPermissionSchema}
 
@@ -286,7 +296,8 @@ def remove_collaborator(
     db: Session = Depends(get_db),
     caller_id: str = Depends(get_current_user_id),
 ):
-    """Removes one collaborator's access. Owner or ADMIN collaborators only.
+    """Removes one collaborator's access. Owner only — not even ADMIN
+    collaborators, who manage content, not who else has access.
 
     The owner is never a row in event_collaborators (see Event.owner_id),
     so there's nothing here for them to accidentally remove themselves
@@ -298,7 +309,7 @@ def remove_collaborator(
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    _require_admin_access(db, event, caller_id)
+    _require_owner(event, caller_id)
 
     if user_id == event.owner_id:
         raise HTTPException(status_code=400, detail="The event owner can't be removed as a collaborator.")
@@ -313,3 +324,42 @@ def remove_collaborator(
 
     db.delete(link)
     db.commit()
+
+
+@router.patch("/{event_id}/collaborators/{user_id}", response_model=CollaboratorResponse)
+def update_collaborator(
+    event_id: str,
+    user_id: str,
+    payload: UpdateCollaboratorRequest,
+    db: Session = Depends(get_db),
+    caller_id: str = Depends(get_current_user_id),
+):
+    """Changes one collaborator's permission level. Owner only, same as remove."""
+    from ..main import Event, EventCollaborator, User, CollaboratorPermission as ModelPermission
+
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    _require_owner(event, caller_id)
+
+    if user_id == event.owner_id:
+        raise HTTPException(status_code=400, detail="The event owner's access can't be changed.")
+
+    link = (
+        db.query(EventCollaborator)
+        .filter(EventCollaborator.event_id == event_id, EventCollaborator.user_id == user_id)
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="Collaborator not found")
+
+    link.permission = ModelPermission(payload.permission.value)
+    db.commit()
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    return CollaboratorResponse(
+        user_id=user_id,
+        email=target_user.email if target_user else None,
+        name=target_user.name if target_user else None,
+        permission=payload.permission,
+    )
