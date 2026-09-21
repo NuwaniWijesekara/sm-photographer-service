@@ -44,7 +44,6 @@ class EventResponse(BaseModel):
 class CollaboratorPermission(str, Enum):
     VIEW_ONLY = "VIEW_ONLY"
     CAN_UPLOAD = "CAN_UPLOAD"
-    ADMIN = "ADMIN"
 
 class SharedEventResponse(BaseModel):
     id: str

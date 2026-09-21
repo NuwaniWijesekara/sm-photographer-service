@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
-from .events import get_db, get_current_user_id, _require_admin_access
+from .events import get_db, get_current_user_id, _require_owner
 from ..services.s3 import s3_service
 from ..schemas.schemas import (
     SharedEventResponse,
@@ -19,15 +19,6 @@ from ..schemas.schemas import (
 
 router = APIRouter(prefix="/api/v1/events", tags=["Collaborators"])
 logger = logging.getLogger(__name__)
-
-
-def _require_owner(event, user_id: str) -> None:
-    """Strictly the event owner — not even ADMIN collaborators. ADMIN gates
-    content actions (see events.py's _require_admin_access for uploads and
-    deleting the event); who has access and what role they hold is the
-    owner's call alone."""
-    if event.owner_id != user_id:
-        raise HTTPException(status_code=403, detail="Only the event owner can manage collaborator access.")
 
 _VALID_PERMISSIONS = {p.value for p in CollaboratorPermissionSchema}
 
@@ -266,15 +257,14 @@ def list_collaborators(
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """All collaborators on this event. Owner or ADMIN collaborators only —
-    a stricter check than add/bulk-add above, since seeing (and removing)
-    the whole access list is more sensitive than being invited onto it."""
+    """All collaborators on this event. Owner only — there's no ADMIN
+    collaborator role anymore, so nobody but the owner manages this."""
     from ..main import Event, EventCollaborator, User
 
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    _require_admin_access(db, event, user_id)
+    _require_owner(event, user_id)
 
     rows = (
         db.query(EventCollaborator, User.email, User.name)
@@ -296,8 +286,9 @@ def remove_collaborator(
     db: Session = Depends(get_db),
     caller_id: str = Depends(get_current_user_id),
 ):
-    """Removes one collaborator's access. Owner only — not even ADMIN
-    collaborators, who manage content, not who else has access.
+    """Removes one collaborator's access. Owner only — there's no ADMIN
+    collaborator role anymore; CAN_UPLOAD collaborators manage content,
+    not who else has access.
 
     The owner is never a row in event_collaborators (see Event.owner_id),
     so there's nothing here for them to accidentally remove themselves

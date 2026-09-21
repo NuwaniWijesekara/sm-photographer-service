@@ -127,7 +127,7 @@ def _get_collaborator_permission(db: Session, event_id: str, user_id: str):
     return link.permission if link else None
 
 def _require_upload_access(db: Session, event, user_id: str) -> None:
-    """Owner, or a collaborator with CAN_UPLOAD or ADMIN. Raises 403 otherwise.
+    """Owner, or a collaborator with CAN_UPLOAD. Raises 403 otherwise.
 
     This is the closest thing this service has to an "upload photos"
     permission today: there's no direct photo-upload endpoint yet — photos
@@ -138,20 +138,17 @@ def _require_upload_access(db: Session, event, user_id: str) -> None:
     if event.owner_id == user_id:
         return
     permission = _get_collaborator_permission(db, event.id, user_id)
-    if permission in (CollaboratorPermission.CAN_UPLOAD, CollaboratorPermission.ADMIN):
+    if permission == CollaboratorPermission.CAN_UPLOAD:
         return
     raise HTTPException(status_code=403, detail="You don't have upload access to this event.")
 
-def _require_admin_access(db: Session, event, user_id: str) -> None:
-    """Owner, or a collaborator with ADMIN. Raises 403 otherwise — gates
-    destructive actions (deleting the event and everything in it)."""
-    from ..main import CollaboratorPermission
-    if event.owner_id == user_id:
-        return
-    permission = _get_collaborator_permission(db, event.id, user_id)
-    if permission == CollaboratorPermission.ADMIN:
-        return
-    raise HTTPException(status_code=403, detail="You don't have admin access to this event.")
+def _require_owner(event, user_id: str) -> None:
+    """Strictly the event owner. There's no ADMIN collaborator role anymore —
+    managing who has access, what they can do, and destructive actions like
+    deleting the event are all the owner's call alone; CAN_UPLOAD only ever
+    gates content (see _require_upload_access above)."""
+    if event.owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the event owner can do this.")
 
 @router.get("/check-username")
 def check_username(
@@ -282,7 +279,7 @@ def delete_event(event_id: str, db: Session = Depends(get_db), user_id: str = De
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    _require_admin_access(db, event, user_id)
+    _require_owner(event, user_id)
 
     # 1. Grab URLs before the rows disappear
     images = db.query(Image).filter(Image.event_id == event_id).all()

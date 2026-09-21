@@ -32,7 +32,6 @@ class EventStatus(str, enum.Enum):
 class CollaboratorPermission(str, enum.Enum):
     VIEW_ONLY  = "VIEW_ONLY"
     CAN_UPLOAD = "CAN_UPLOAD"
-    ADMIN      = "ADMIN"
 
 class User(Base):
     """The single, unified account table — every user (event creator or
@@ -138,6 +137,30 @@ async def lifespan(app: FastAPI):
         # per-event selfie upload. Drops the column for anyone who already
         # ran the migration that added it.
         conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS reference_face_url;"))
+
+        # ── ADMIN collaborator role removed — only owners manage access now,
+        # so VIEW_ONLY/CAN_UPLOAD is the whole story. Postgres has no
+        # "ALTER TYPE ... DROP VALUE", so this rebuilds the enum type:
+        # downgrade any existing ADMIN rows to CAN_UPLOAD first (the closest
+        # remaining role to what ADMIN could still do — manage content),
+        # then swap in a type that no longer has ADMIN as a valid value.
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid
+                    WHERE t.typname = 'collaboratorpermission' AND e.enumlabel = 'ADMIN'
+                ) THEN
+                    UPDATE event_collaborators SET permission = 'CAN_UPLOAD' WHERE permission = 'ADMIN';
+                    ALTER TYPE collaboratorpermission RENAME TO collaboratorpermission_old;
+                    CREATE TYPE collaboratorpermission AS ENUM ('VIEW_ONLY', 'CAN_UPLOAD');
+                    ALTER TABLE event_collaborators
+                        ALTER COLUMN permission TYPE collaboratorpermission
+                        USING permission::text::collaboratorpermission;
+                    DROP TYPE collaboratorpermission_old;
+                END IF;
+            END $$;
+        """))
         conn.commit()
     Base.metadata.create_all(bind=engine)
     print("✓ Photographer service running on :8001")
