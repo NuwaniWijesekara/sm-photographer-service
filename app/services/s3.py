@@ -76,19 +76,6 @@ class S3Service:
             batch = keys[i:i + 1000]
             self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch})
 
-    def upload_bytes(self, image_bytes: bytes, key: str) -> str:
-        """Strips EXIF (privacy: reference face photos shouldn't carry GPS/device
-        metadata) and re-encodes as JPEG before upload, mirroring
-        sm-ingestion-worker-service's strip_exif_and_upload. Returns the full
-        virtual-hosted-style URL, same shape as every other *_url column."""
-        img = Image.open(io.BytesIO(image_bytes))
-        img = ImageOps.exif_transpose(img)
-        img = img.convert("RGB")
-        clean = io.BytesIO()
-        img.save(clean, format="JPEG", quality=95)
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=clean.getvalue(), ContentType="image/jpeg")
-        return f"https://{self.bucket}.s3.{self.client.meta.region_name}.amazonaws.com/{key}"
-
     def generate_presigned_url(self, url_or_key: str | None, expiration: int = 3600) -> str | None:
         if not url_or_key:
             return None
