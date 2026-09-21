@@ -72,6 +72,15 @@ class BulkImportResponse(BaseModel):
     skipped: int
     results: list[BulkCollaboratorResult]
 
+class AddCollaboratorRequest(BaseModel):
+    email: EmailStr
+    permission: CollaboratorPermission = CollaboratorPermission.VIEW_ONLY
+
+class AddCollaboratorResponse(BaseModel):
+    user_id: str
+    email: str
+    permission: CollaboratorPermission
+
 class ReferenceFaceResponse(BaseModel):
     message: str
     reference_face_url: Optional[str] = None
