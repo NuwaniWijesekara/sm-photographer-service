@@ -40,13 +40,14 @@ class User(Base):
     accommodate anonymous instant-access sessions, which get a row with
     neither set."""
     __tablename__ = "users"
-    id              = Column(String, primary_key=True, default=_uuid)
-    name            = Column(String, nullable=True)
-    email           = Column(String, unique=True, index=True, nullable=True)
-    password_hash   = Column(String, nullable=True)
-    is_anonymous    = Column(Boolean, default=False, nullable=False)
-    created_at      = Column(DateTime, default=datetime.utcnow)
-    events          = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
+    id                  = Column(String, primary_key=True, default=_uuid)
+    name                = Column(String, nullable=True)
+    email               = Column(String, unique=True, index=True, nullable=True)
+    password_hash       = Column(String, nullable=True)
+    is_anonymous        = Column(Boolean, default=False, nullable=False)
+    reference_face_url  = Column(String, nullable=True)
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    events              = relationship("Event", back_populates="owner", cascade="all, delete-orphan")
 
 class Event(Base):
     __tablename__ = "events"
@@ -133,6 +134,9 @@ async def lifespan(app: FastAPI):
                 THEN ALTER TABLE events RENAME COLUMN photographer_id TO owner_id; END IF;
             END $$;
         """))
+
+        # ── Privacy-First AI Face Matching: account-level reference face ──
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reference_face_url VARCHAR(512);"))
         conn.commit()
     Base.metadata.create_all(bind=engine)
     print("✓ Photographer service running on :8001")
@@ -151,9 +155,11 @@ app.add_middleware(
 from .api.auth import router as auth_router
 from .api.events import router as events_router
 from .api.collaborators import router as collaborators_router
+from .api.profile import router as profile_router
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(collaborators_router)
+app.include_router(profile_router)
 
 @app.get("/health")
 def health():

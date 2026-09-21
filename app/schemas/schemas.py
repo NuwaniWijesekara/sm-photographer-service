@@ -71,3 +71,7 @@ class BulkImportResponse(BaseModel):
     added: int
     skipped: int
     results: list[BulkCollaboratorResult]
+
+class ReferenceFaceResponse(BaseModel):
+    message: str
+    reference_face_url: Optional[str] = None
