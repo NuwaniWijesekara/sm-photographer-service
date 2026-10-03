@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -6,6 +7,7 @@ from ..utils.security import verify_password, get_password_hash, create_access_t
 from ..schemas.schemas import UserCreate, Token, GoogleLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 def get_db():
     from ..main import SessionLocal
@@ -68,18 +70,39 @@ def login_anonymous(db: Session = Depends(get_db)):
 @router.post("/google", response_model=Token)
 def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
     from ..main import User
-    from google.oauth2 import id_token as google_id_token
-    from google.auth.transport import requests as google_requests
 
-    if not data.id_token:
-        raise HTTPException(status_code=400, detail="Google id_token is required")
+    raw_token = (data.id_token or "").strip()
+    if not raw_token:
+        # e.g. the Google popup was blocked or closed before returning a credential
+        raise HTTPException(status_code=400, detail="Google sign-in didn't complete. Please try again.")
+
+    if not settings.google_client_id:
+        # Without an audience, verify_oauth2_token would accept tokens issued
+        # to *any* Google client — refuse rather than verify insecurely.
+        logger.error("GOOGLE_CLIENT_ID is not set — rejecting Google sign-in")
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured.")
+
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_requests
+        from google.auth.exceptions import GoogleAuthError
+    except ImportError:
+        logger.exception("google-auth (with requests transport) is not installed")
+        raise HTTPException(status_code=503, detail="Google sign-in is temporarily unavailable.")
 
     try:
         idinfo = google_id_token.verify_oauth2_token(
-            data.id_token, google_requests.Request(), settings.google_client_id
+            raw_token, google_requests.Request(), settings.google_client_id
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Google token verification failed: {e}")
+        # Malformed, expired, wrong audience or bad signature. Details go to
+        # the log only — they're not useful (or safe) to echo to the client.
+        logger.info(f"Rejected Google token: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired Google sign-in. Please try again.")
+    except GoogleAuthError as e:
+        # e.g. couldn't fetch Google's signing certificates
+        logger.warning(f"Google token verification unavailable: {e}")
+        raise HTTPException(status_code=503, detail="Couldn't reach Google to verify sign-in. Please try again.")
 
     email = idinfo.get("email")
     name = idinfo.get("name")

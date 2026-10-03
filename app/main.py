@@ -5,8 +5,10 @@ def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 socket.getaddrinfo = patched_getaddrinfo
 
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import redis as redis_lib
 from .config.settings import settings
@@ -199,9 +201,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ScanMe — Photographer BFF", version="1.0.0", lifespan=lifespan)
 
+# Registered BEFORE CORSMiddleware so it sits inside it in the stack: an
+# unhandled exception becomes a JSON 500 that still passes through CORS.
+# Otherwise Starlette's outermost error handler answers without CORS headers
+# and the browser misreports the crash as a CORS policy error.
+@app.middleware("http")
+async def json_500_on_unhandled_error(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.getLogger(__name__).exception(f"Unhandled error on {request.method} {request.url.path}")
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+# FRONTEND_ORIGIN may be a comma-separated list.
+_cors_origins = sorted(
+    {o.strip() for o in settings.frontend_origin.split(",") if o.strip()} | {"http://localhost:3000"}
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_origin, "http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

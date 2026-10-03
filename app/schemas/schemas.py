@@ -9,7 +9,9 @@ class UserCreate(BaseModel):
     name: Optional[str] = None
 
 class GoogleLoginRequest(BaseModel):
-    id_token: str
+    # Optional so a missing token gets the endpoint's own clear 400 rather
+    # than a validation 422 (the GSI popup can fail and post nothing).
+    id_token: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str

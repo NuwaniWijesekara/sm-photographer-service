@@ -15,3 +15,4 @@ email-validator
 boto3
 pillow-heif
 google-auth
+requests
