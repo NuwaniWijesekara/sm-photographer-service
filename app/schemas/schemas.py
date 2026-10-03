@@ -49,6 +49,18 @@ class EventResponse(BaseModel):
     watermark_logo_url: Optional[str] = None
     access_mode: str = "public"
 
+class OwnerPhoto(BaseModel):
+    id: str
+    # Presigned display version (watermarked for watermarked events), falling
+    # back to the original for images ingested before display copies existed
+    # — the same URL guests are shown.
+    display_url: str
+    thumbnail_url: Optional[str] = None
+
+class OwnerGalleryResponse(BaseModel):
+    event: EventResponse
+    photos: list[OwnerPhoto]
+
 # Mirrors app.main.CollaboratorPermission (the SQLAlchemy enum) — kept as an
 # independent definition here, the same way this module avoids importing
 # from ..main at module scope elsewhere in the service.

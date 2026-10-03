@@ -7,7 +7,7 @@ import uuid, json
 import httpx
 from jose import JWTError, jwt
 from ..config.settings import settings
-from ..schemas.schemas import EventCreate, EventUpdate, EventResponse
+from ..schemas.schemas import EventCreate, EventUpdate, EventResponse, OwnerGalleryResponse, OwnerPhoto
 
 router = APIRouter(prefix="/events", tags=["Event Management"])
 bearer = HTTPBearer()
@@ -232,6 +232,31 @@ def list_events(db: Session = Depends(get_db), user_id: str = Depends(get_curren
     from ..main import Event
     events = db.query(Event).filter(Event.owner_id == user_id).all()
     return [_event_to_response(e) for e in events]
+
+@router.get("/{event_id}/photos", response_model=OwnerGalleryResponse)
+def list_event_photos(event_id: str, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    """The owner's view of their event's photos, served from the portal
+    rather than the guest gallery — so it works for every access mode and
+    doesn't depend on guest-side sign-in. Owner only: invite-only galleries
+    deliberately make collaborators go through Google-verified guest access
+    (sm-guest-service utils/access.py), and this must not bypass that."""
+    from ..main import Event, Image
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    _require_owner(event, user_id)
+
+    ttl = settings.photo_url_ttl_seconds
+    images = db.query(Image).filter(Image.event_id == event.id).order_by(Image.created_at).all()
+    photos = [
+        OwnerPhoto(
+            id=img.id,
+            display_url=s3_service.generate_presigned_url(img.enhanced_url or img.s3_url, expiration=ttl),
+            thumbnail_url=s3_service.generate_presigned_url(img.thumbnail_url, expiration=ttl) if img.thumbnail_url else None,
+        )
+        for img in images
+    ]
+    return OwnerGalleryResponse(event=_event_to_response(event), photos=photos)
 
 @router.get("/{event_id}", response_model=EventResponse)
 def get_event(event_id: str, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):

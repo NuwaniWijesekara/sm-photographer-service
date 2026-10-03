@@ -14,5 +14,8 @@ class Settings(BaseSettings):
     frontend_origin:    str = "http://localhost:3000"
     api_gateway_url:    str = "http://api-gateway:8000"
     google_client_id:   str = ""
+    # Lifetime of presigned photo URLs in the owner gallery (same default as
+    # sm-guest-service's PHOTO_URL_TTL_SECONDS).
+    photo_url_ttl_seconds: int = 900
 
 settings = Settings()
