@@ -1,6 +1,5 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import bcrypt
 import jwt
@@ -38,16 +37,13 @@ def create_access_token(user, email_verified: bool = False) -> str:
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme),
-    db: Session = Depends(lambda: None)  # overridden via dependency injection in main
-):
-    token = credentials.credentials
+def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(oauth2_scheme)) -> str:
+    """The caller's user id (JWT `sub`). 401 on a missing, expired or invalid token."""
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
     except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    user_id = payload.get("sub")
+    if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token")
     return user_id

@@ -4,7 +4,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     database_url:       str = "postgresql://postgres:postgres@postgres:5432/scanme_db"
     redis_url:          str = "redis://redis:6379/0"
-    jwt_secret:         str = "change_me_in_production"
+    # Required — no default, so a missing JWT_SECRET fails at startup instead
+    # of silently signing tokens with a publicly known value.
+    jwt_secret:         str
     jwt_algorithm:      str = "HS256"
     aws_access_key_id:    str
     aws_secret_access_key: str

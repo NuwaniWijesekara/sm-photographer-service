@@ -1,11 +1,8 @@
-import io, os, logging, boto3
+import os, logging, boto3
 from botocore.config import Config
 from urllib.parse import urlparse, unquote
-from PIL import Image, ImageOps
-from pillow_heif import register_heif_opener
 from ..config.settings import settings
 
-register_heif_opener()
 logger = logging.getLogger(__name__)
 
 class S3Service:

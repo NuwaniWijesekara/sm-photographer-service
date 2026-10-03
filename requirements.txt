@@ -6,13 +6,11 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 redis
-python-jose[cryptography]
-passlib[bcrypt]
 pydantic
 pydantic-settings
 pyjwt
+bcrypt
 email-validator
 boto3
-pillow-heif
 google-auth
 requests

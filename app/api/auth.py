@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..config.settings import settings
 from ..utils.security import verify_password, get_password_hash, create_access_token
@@ -8,6 +9,13 @@ from ..schemas.schemas import UserCreate, Token, GoogleLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
+
+def _find_user_by_email(db: Session, email: str):
+    """Emails are matched case-insensitively everywhere (collaborator invites
+    are stored lowercased; older accounts may not be), so `Jane@x.com` and
+    `jane@x.com` are always the same account."""
+    from ..main import User
+    return db.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
 
 def get_db():
     from ..main import SessionLocal
@@ -19,15 +27,27 @@ def get_db():
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(user_data: UserCreate, db: Session = Depends(get_db)):
-    from ..main import User
-    existing = db.query(User).filter(User.email == user_data.email).first()
+    from ..main import EventCollaborator, User
+    email = user_data.email.strip().lower()
+    existing = _find_user_by_email(db, email)
     if existing:
         if existing.password_hash:
             raise HTTPException(status_code=400, detail="Email already registered")
-        # A placeholder row from a collaborator bulk-import (see
-        # api/collaborators.py) — no password yet. Complete it in place so
-        # its id (and any event_collaborators rows already pointing at it)
-        # stay intact, rather than rejecting or creating a second account.
+        # Emails on any event's guest list (collaborators) can only sign in
+        # with Google. Password signup never proves the caller owns the
+        # email, so letting it claim an invited placeholder would hand the
+        # invite (and its access) to whoever registered first.
+        on_guest_list = (
+            db.query(EventCollaborator.id).filter(EventCollaborator.user_id == existing.id).first()
+        )
+        if on_guest_list:
+            raise HTTPException(
+                status_code=403,
+                detail="This email has been invited to an event. Please sign in with Google using this email.",
+            )
+        # A placeholder no longer on any guest list (e.g. its invites were
+        # removed) — no password yet. Complete it in place so its id stays
+        # intact, rather than rejecting or creating a second account.
         existing.password_hash = get_password_hash(user_data.password)
         if user_data.name:
             existing.name = user_data.name
@@ -35,7 +55,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
         db.refresh(existing)
         return {"message": "Account created successfully.", "user_id": existing.id}
     user = User(
-        email=user_data.email,
+        email=email,
         password_hash=get_password_hash(user_data.password),
         name=user_data.name,
         is_anonymous=False,
@@ -47,8 +67,7 @@ def signup(user_data: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    from ..main import User
-    user = db.query(User).filter(User.email == form_data.username).first()
+    user = _find_user_by_email(db, form_data.username)
     if not user or not user.password_hash or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(user)
@@ -109,7 +128,8 @@ def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
     if not email:
         raise HTTPException(status_code=400, detail="Google token does not contain email")
 
-    user = db.query(User).filter(User.email == email).first()
+    email = email.strip().lower()
+    user = _find_user_by_email(db, email)
     if not user:
         user = User(email=email, name=name, is_anonymous=False)
         db.add(user)

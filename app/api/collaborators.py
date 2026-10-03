@@ -4,7 +4,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 
-from .events import get_db, get_current_user_id, _require_owner
+from sqlalchemy import func
+
+from .events import get_db, _require_owner
+from ..utils.security import get_current_user_id
 from ..services.s3 import s3_service
 from ..schemas.schemas import (
     SharedEventResponse,
@@ -39,6 +42,7 @@ def _resolve_and_link_collaborator(
     email: str,
     permission: str,
     resolved_cache: dict | None = None,
+    existing_links: dict | None = None,
 ):
     """Core logic shared by the CSV bulk import and the single manual-add
     endpoint: find (or create a placeholder for) the user with this email,
@@ -47,6 +51,11 @@ def _resolve_and_link_collaborator(
     `email` must already be normalized (stripped, lowercased, non-empty).
     Does not commit — callers commit once, after their own batch/request.
     Raises CollaboratorAddError("is_owner") or ("already_collaborator").
+
+    Batch callers pass `resolved_cache` (email → User) and `existing_links`
+    (user_id → permission value) prefetched for the whole batch; both are
+    kept up to date here, so repeated emails within one batch are caught
+    without a DB round-trip (and without relying on autoflush).
     """
     from ..main import EventCollaborator, User, CollaboratorPermission as ModelPermission
 
@@ -55,7 +64,7 @@ def _resolve_and_link_collaborator(
 
     target_user = resolved_cache.get(email) if resolved_cache is not None else None
     if target_user is None:
-        target_user = db.query(User).filter(User.email == email).first()
+        target_user = db.query(User).filter(func.lower(User.email) == email).first()
     if target_user is None:
         # No account with this email yet — create a placeholder so the
         # share is already waiting for them when they do sign up.
@@ -65,16 +74,22 @@ def _resolve_and_link_collaborator(
     if resolved_cache is not None:
         resolved_cache[email] = target_user
 
-    existing_link = (
-        db.query(EventCollaborator)
-        .filter(EventCollaborator.event_id == event.id, EventCollaborator.user_id == target_user.id)
-        .first()
-    )
-    if existing_link:
-        raise CollaboratorAddError("already_collaborator", permission=existing_link.permission.value)
+    if existing_links is not None:
+        existing_permission = existing_links.get(target_user.id)
+    else:
+        existing_link = (
+            db.query(EventCollaborator)
+            .filter(EventCollaborator.event_id == event.id, EventCollaborator.user_id == target_user.id)
+            .first()
+        )
+        existing_permission = existing_link.permission.value if existing_link else None
+    if existing_permission:
+        raise CollaboratorAddError("already_collaborator", permission=existing_permission)
 
     link = EventCollaborator(event_id=event.id, user_id=target_user.id, permission=ModelPermission(permission))
     db.add(link)
+    if existing_links is not None:
+        existing_links[target_user.id] = permission
     return target_user, link
 
 
@@ -166,7 +181,7 @@ async def bulk_add_collaborators(
     already waiting once they sign up or log in with that email (see the
     signup "complete a placeholder" path in api/auth.py).
     """
-    from ..main import Event
+    from ..main import Event, EventCollaborator, User
 
     event = db.query(Event).filter(Event.id == event_id, Event.owner_id == user_id).first()
     if not event:
@@ -183,10 +198,17 @@ async def bulk_add_collaborators(
 
     results: list[BulkCollaboratorResult] = []
     added = 0
-    # Tracks placeholder users created earlier in this same upload, so
-    # duplicate emails within one file resolve to one row without needing a
-    # DB flush per iteration.
-    resolved_this_request: dict = {}
+    # Prefetch every user and existing link this file can touch in two
+    # queries, instead of two per row.
+    emails = {row["email"].lower() for row in rows if row["email"]}
+    resolved_this_request: dict = {
+        u.email.lower(): u
+        for u in db.query(User).filter(func.lower(User.email).in_(emails)).all()
+    } if emails else {}
+    existing_links: dict = {
+        link.user_id: link.permission.value
+        for link in db.query(EventCollaborator).filter(EventCollaborator.event_id == event.id).all()
+    }
 
     for row in rows:
         email = row["email"].lower()
@@ -196,7 +218,10 @@ async def bulk_add_collaborators(
 
         permission = _parse_permission(row["permission"])
         try:
-            _resolve_and_link_collaborator(db, event, owner_email, email, permission, resolved_cache=resolved_this_request)
+            _resolve_and_link_collaborator(
+                db, event, owner_email, email, permission,
+                resolved_cache=resolved_this_request, existing_links=existing_links,
+            )
         except CollaboratorAddError as e:
             results.append(BulkCollaboratorResult(email=email, status=e.reason, permission=e.permission))
             continue
