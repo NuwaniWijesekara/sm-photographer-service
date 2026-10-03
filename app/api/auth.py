@@ -96,5 +96,5 @@ def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
         user.name = name
         db.commit()
 
-    token = create_access_token(user)
+    token = create_access_token(user, email_verified=idinfo.get("email_verified") is True)
     return {"access_token": token, "token_type": "bearer"}

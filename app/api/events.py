@@ -116,7 +116,7 @@ def _event_to_response(e) -> EventResponse:
         cover_photo_url=cover_url, qr_token=e.qr_token, username=e.username,
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at,
         owner_id=e.owner_id, is_watermarked=e.is_watermarked,
-        watermark_logo_url=e.watermark_logo_url,
+        watermark_logo_url=e.watermark_logo_url, access_mode=e.access_mode,
     )
 
 def _get_collaborator_permission(db: Session, event_id: str, user_id: str):
@@ -218,6 +218,7 @@ async def create_event(
         # changes plans.
         is_watermarked=is_watermarked,
         watermark_logo_url=(package.get("watermark_logo_url") or None) if is_watermarked else None,
+        access_mode=event_data.access_mode,
     )
     db.add(event)
     db.commit()
@@ -259,6 +260,11 @@ def update_event(
         existing = db.query(Event).filter(Event.username == clean_username).first()
         if existing:
             raise HTTPException(status_code=400, detail="Collection username already taken. Please choose another.")
+
+    if event_data.access_mode is not None and event_data.access_mode != event.access_mode:
+        # Who can see the gallery is the owner's call, like managing collaborators.
+        _require_owner(event, user_id)
+        event.access_mode = event_data.access_mode
 
     drive_url_changed = event.drive_url != event_data.drive_url
 

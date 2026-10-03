@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 from enum import Enum
 
@@ -15,15 +15,21 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+# Mirrors app.main.EventAccessMode.
+AccessMode = Literal["public", "invite_only"]
+
 class EventCreate(BaseModel):
     name: str
     drive_url: str
     username: str
+    access_mode: AccessMode = "invite_only"
 
 class EventUpdate(BaseModel):
     name: str
     drive_url: str
     username: str
+    # Omitted = leave unchanged. Changing it is owner-only.
+    access_mode: Optional[AccessMode] = None
 
 class EventResponse(BaseModel):
     id: str
@@ -39,6 +45,7 @@ class EventResponse(BaseModel):
     owner_id: Optional[str] = None
     is_watermarked: bool = False
     watermark_logo_url: Optional[str] = None
+    access_mode: str = "public"
 
 # Mirrors app.main.CollaboratorPermission (the SQLAlchemy enum) — kept as an
 # independent definition here, the same way this module avoids importing

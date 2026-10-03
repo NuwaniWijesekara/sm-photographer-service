@@ -18,16 +18,22 @@ def get_password_hash(password: str) -> str:
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
 
-def create_access_token(user) -> str:
+def create_access_token(user, email_verified: bool = False) -> str:
     """Builds the single, standard JWT payload issued to every user —
     whether they registered with a password, logged in anonymously, or via
     Google. `is_anonymous` lets downstream services (e.g. guest-service) tell
-    temporary sessions apart without a second lookup."""
+    temporary sessions apart without a second lookup.
+
+    `email_verified` is a property of *this sign-in*, not the account: only a
+    Google sign-in proves the caller controls the email (password signup
+    never verifies it), and guest-service requires it for invite-only
+    galleries."""
     payload = {
         "sub": user.id,
         "email": user.email or "",
         "name": user.name or "",
         "is_anonymous": user.is_anonymous,
+        "email_verified": bool(email_verified),
         "exp": datetime.utcnow() + timedelta(minutes=settings.jwt_expire_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

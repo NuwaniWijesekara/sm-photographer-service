@@ -29,6 +29,11 @@ class EventStatus(str, enum.Enum):
     READY      = "ready"
     FAILED     = "failed"
 
+class EventAccessMode(str, enum.Enum):
+    """Who may open an event's guest gallery (enforced in sm-guest-service)."""
+    PUBLIC      = "public"       # anyone with the link / QR / username
+    INVITE_ONLY = "invite_only"  # owner + collaborators, Google-verified email
+
 class CollaboratorPermission(str, enum.Enum):
     VIEW_ONLY  = "VIEW_ONLY"
     CAN_UPLOAD = "CAN_UPLOAD"
@@ -68,6 +73,10 @@ class Event(Base):
     # Package's watermark logo (S3 URL) snapshotted alongside is_watermarked;
     # null means the worker's default logo / text watermark.
     watermark_logo_url = Column(String, nullable=True)
+    # Stored as a plain string (not a PG enum) so sm-guest-service can mirror
+    # it without sharing a type. New events default to invite-only; the
+    # server default only backfills rows that existed before this column.
+    access_mode     = Column(String, nullable=False, default=EventAccessMode.INVITE_ONLY.value, server_default=EventAccessMode.PUBLIC.value)
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
     collaborators   = relationship("EventCollaborator", back_populates="event", cascade="all, delete-orphan")
@@ -154,6 +163,11 @@ async def lifespan(app: FastAPI):
         conn.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS enhanced_url VARCHAR;"))
         # Same as scripts/add_event_watermark_logo_url_column.py.
         conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS watermark_logo_url VARCHAR;"))
+
+        # ── Guest gallery access control ──
+        # Existing events stay public so links/QR codes already handed out
+        # keep working; new events default to invite-only (see Event model).
+        conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS access_mode VARCHAR NOT NULL DEFAULT 'public';"))
 
         # ── ADMIN collaborator role removed — only owners manage access now,
         # so VIEW_ONLY/CAN_UPLOAD is the whole story. Postgres has no
