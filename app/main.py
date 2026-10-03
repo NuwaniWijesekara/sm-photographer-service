@@ -65,6 +65,9 @@ class Event(Base):
     # ingestion worker reads this to decide whether display copies get a
     # bottom-right watermark.
     is_watermarked  = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Package's watermark logo (S3 URL) snapshotted alongside is_watermarked;
+    # null means the worker's default logo / text watermark.
+    watermark_logo_url = Column(String, nullable=True)
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
     collaborators   = relationship("EventCollaborator", back_populates="event", cascade="all, delete-orphan")
@@ -149,6 +152,8 @@ async def lifespan(app: FastAPI):
         # ── Free-tier watermarking ──
         conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_watermarked BOOLEAN NOT NULL DEFAULT FALSE;"))
         conn.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS enhanced_url VARCHAR;"))
+        # Same as scripts/add_event_watermark_logo_url_column.py.
+        conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS watermark_logo_url VARCHAR;"))
 
         # ── ADMIN collaborator role removed — only owners manage access now,
         # so VIEW_ONLY/CAN_UPLOAD is the whole story. Postgres has no

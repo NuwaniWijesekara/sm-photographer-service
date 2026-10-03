@@ -38,6 +38,7 @@ class EventResponse(BaseModel):
     created_at: datetime
     owner_id: Optional[str] = None
     is_watermarked: bool = False
+    watermark_logo_url: Optional[str] = None
 
 # Mirrors app.main.CollaboratorPermission (the SQLAlchemy enum) — kept as an
 # independent definition here, the same way this module avoids importing

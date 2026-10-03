@@ -115,7 +115,8 @@ def _event_to_response(e) -> EventResponse:
         id=e.id, name=e.name, date=e.date, drive_url=e.drive_url,
         cover_photo_url=cover_url, qr_token=e.qr_token, username=e.username,
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at,
-        owner_id=e.owner_id, is_watermarked=e.is_watermarked
+        owner_id=e.owner_id, is_watermarked=e.is_watermarked,
+        watermark_logo_url=e.watermark_logo_url,
     )
 
 def _get_collaborator_permission(db: Session, event_id: str, user_id: str):
@@ -194,6 +195,7 @@ async def create_event(
         user_id, authorization=f"{credentials.scheme} {credentials.credentials}"
     )
     max_events = _max_events_limit(package)
+    is_watermarked = bool(package.get("has_watermark", False))
     if max_events is not None:
         current_event_count = db.query(Event).filter(Event.owner_id == user_id).count()
         if current_event_count >= max_events:
@@ -214,7 +216,8 @@ async def create_event(
         # Inherited from the package at creation time and kept for the event's
         # lifetime, so later re-ingestions stay consistent even if the owner
         # changes plans.
-        is_watermarked=bool(package.get("has_watermark", False)),
+        is_watermarked=is_watermarked,
+        watermark_logo_url=(package.get("watermark_logo_url") or None) if is_watermarked else None,
     )
     db.add(event)
     db.commit()
