@@ -45,10 +45,10 @@ def _publish_ingest(redis_client, event_id: str, drive_url: str):
     except Exception as e:
         logger.error(f"Failed to publish ingest to Redis Stream: {e}")
 
-async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[int]:
+async def _get_active_package(user_id: str, authorization: str) -> dict:
     """
-    Look up the caller's `max_events` cap from their active subscription's
-    package, via the API Gateway (never the subscription-service directly —
+    Look up the caller's active subscription's package (the source of their
+    `max_events` cap and `has_watermark` flag), via the API Gateway (never the subscription-service directly —
     it's not on this service's network in every deployment, the gateway is).
 
     subscription-service now always resolves to an active subscription for
@@ -59,11 +59,11 @@ async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[in
     driven entirely by that package's `limits` in the database, and we just
     trust whatever comes back.
 
-    Returns None for "unlimited". If the subscription-service can't be
-    reached, times out, or returns something malformed, this fails open
-    (returns None / unlimited) rather than blocking event creation over an
-    unrelated infrastructure hiccup — this check is a soft business-rule
-    limit, not a security boundary.
+    Returns the package dict, or {} if the subscription-service can't be
+    reached, times out, or returns something malformed. Callers fail open on
+    {} (unlimited events, no watermark) rather than blocking event creation
+    over an unrelated infrastructure hiccup — these are soft business rules,
+    not a security boundary.
     """
     url = f"{settings.api_gateway_url}/api/v1/subscriptions/{user_id}"
     try:
@@ -71,19 +71,19 @@ async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[in
             response = await client.get(url, headers={"Authorization": authorization})
     except httpx.HTTPError as e:
         logger.warning(f"Subscription lookup failed for user {user_id}: {e}")
-        return None
+        return {}
 
     if response.status_code != 200:
         logger.warning(
             f"Subscription lookup for user {user_id} returned {response.status_code}: {response.text[:200]}"
         )
-        return None
+        return {}
 
     try:
         subscriptions = response.json()
     except ValueError:
         logger.warning(f"Subscription lookup for user {user_id} returned non-JSON body")
-        return None
+        return {}
 
     active_subscription = next(
         (s for s in subscriptions if isinstance(s, dict) and s.get("status") == "active"),
@@ -94,9 +94,13 @@ async def _get_max_events_limit(user_id: str, authorization: str) -> Optional[in
         # active (real or virtual Free) subscription — but if it somehow
         # doesn't, fail open rather than guess at a number.
         logger.warning(f"No active subscription (real or virtual) returned for user {user_id}")
-        return None
+        return {}
 
-    package = active_subscription.get("package") or {}
+    package = active_subscription.get("package")
+    return package if isinstance(package, dict) else {}
+
+def _max_events_limit(package: dict) -> Optional[int]:
+    """The package's `max_events` cap, or None for "unlimited"."""
     limits = package.get("limits") or {}
     photographer_limits = limits.get("photographer_limits") or {}
     # Missing key or explicit `null` both mean "unlimited" — dict.get with no
@@ -111,7 +115,7 @@ def _event_to_response(e) -> EventResponse:
         id=e.id, name=e.name, date=e.date, drive_url=e.drive_url,
         cover_photo_url=cover_url, qr_token=e.qr_token, username=e.username,
         status=e.status.value, total_photos=e.total_photos, created_at=e.created_at,
-        owner_id=e.owner_id
+        owner_id=e.owner_id, is_watermarked=e.is_watermarked
     )
 
 def _get_collaborator_permission(db: Session, event_id: str, user_id: str):
@@ -186,9 +190,10 @@ async def create_event(
     # Subscription-service authenticates this same JWT and requires the
     # user_id in the URL to match its own `sub` claim, so we forward the
     # caller's own token rather than minting a new one.
-    max_events = await _get_max_events_limit(
+    package = await _get_active_package(
         user_id, authorization=f"{credentials.scheme} {credentials.credentials}"
     )
+    max_events = _max_events_limit(package)
     if max_events is not None:
         current_event_count = db.query(Event).filter(Event.owner_id == user_id).count()
         if current_event_count >= max_events:
@@ -205,7 +210,11 @@ async def create_event(
     event = Event(
         name=event_data.name, date=datetime.now(),
         drive_url=event_data.drive_url, qr_token=qr_token, username=clean_username,
-        owner_id=user_id, status=EventStatus.PENDING, total_photos=0
+        owner_id=user_id, status=EventStatus.PENDING, total_photos=0,
+        # Inherited from the package at creation time and kept for the event's
+        # lifetime, so later re-ingestions stay consistent even if the owner
+        # changes plans.
+        is_watermarked=bool(package.get("has_watermark", False)),
     )
     db.add(event)
     db.commit()

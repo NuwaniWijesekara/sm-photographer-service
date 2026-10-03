@@ -61,6 +61,10 @@ class Event(Base):
     created_at      = Column(DateTime, default=datetime.utcnow)
     total_photos    = Column(Integer, default=0)
     failed_files    = Column(JSON, nullable=True)
+    # Snapshot of the owner's package `has_watermark` at creation time — the
+    # ingestion worker reads this to decide whether display copies get a
+    # bottom-right watermark.
+    is_watermarked  = Column(Boolean, default=False, nullable=False, server_default="false")
     owner           = relationship("User", back_populates="events")
     images          = relationship("Image", back_populates="event", cascade="all, delete-orphan")
     collaborators   = relationship("EventCollaborator", back_populates="event", cascade="all, delete-orphan")
@@ -85,6 +89,10 @@ class Image(Base):
     event_id       = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
     s3_url         = Column(String, nullable=False)
     thumbnail_url  = Column(String, nullable=True)
+    # Display version: watermarked when the event is_watermarked, otherwise a
+    # plain copy of the original. s3_url stays the untouched original that
+    # AWS Rekognition indexes.
+    enhanced_url   = Column(String, nullable=True)
     filename       = Column(String, nullable=False)
     created_at     = Column(DateTime, default=datetime.utcnow)
     event          = relationship("Event", back_populates="images")
@@ -137,6 +145,10 @@ async def lifespan(app: FastAPI):
         # per-event selfie upload. Drops the column for anyone who already
         # ran the migration that added it.
         conn.execute(text("ALTER TABLE users DROP COLUMN IF EXISTS reference_face_url;"))
+
+        # ── Free-tier watermarking ──
+        conn.execute(text("ALTER TABLE events ADD COLUMN IF NOT EXISTS is_watermarked BOOLEAN NOT NULL DEFAULT FALSE;"))
+        conn.execute(text("ALTER TABLE images ADD COLUMN IF NOT EXISTS enhanced_url VARCHAR;"))
 
         # ── ADMIN collaborator role removed — only owners manage access now,
         # so VIEW_ONLY/CAN_UPLOAD is the whole story. Postgres has no
