@@ -297,6 +297,8 @@ def delete_event(event_id: str, db: Session = Depends(get_db), user_id: str = De
         urls_to_delete.append(img.s3_url)
         if img.thumbnail_url:
             urls_to_delete.append(img.thumbnail_url)
+        if img.enhanced_url:
+            urls_to_delete.append(img.enhanced_url)
 
     # 2. DB delete — Image/Face cascade automatically via FK ondelete="CASCADE"
     db.delete(event)
