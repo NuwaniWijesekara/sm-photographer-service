@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from .events import get_db, _require_owner
+from ..config.settings import settings
 from ..utils.security import get_current_user_id
 from ..services.s3 import s3_service
 from ..schemas.schemas import (
@@ -33,6 +34,32 @@ class CollaboratorAddError(Exception):
         self.reason = reason
         self.permission = permission
         super().__init__(reason)
+
+
+def _guest_gallery_url(event) -> str:
+    """Same link the dashboard shares (getGuestLink in the frontend)."""
+    key = event.qr_token or event.id
+    return f"{settings.frontend_public_url.rstrip('/')}/events/guest/{key}"
+
+
+def _publish_guest_invited(event, emails: list[str]) -> None:
+    """Publish one Guest.Invited message per newly invited email for
+    sm-notification-service to email out. Call only after the invites are
+    committed. Non-fatal: the access is already granted, so a lost message
+    only means a missing email, never a failed request."""
+    from ..main import redis_client
+
+    gallery_url = _guest_gallery_url(event)
+    for email in emails:
+        try:
+            redis_client.xadd(settings.guest_invited_stream, {
+                "event_id": event.id,
+                "event_name": event.name,
+                "guest_email": email,
+                "gallery_url": gallery_url,
+            })
+        except Exception as e:
+            logger.error(f"Failed to publish Guest.Invited for {email} on event {event.id}: {e}")
 
 
 def _resolve_and_link_collaborator(
@@ -198,6 +225,7 @@ async def bulk_add_collaborators(
 
     results: list[BulkCollaboratorResult] = []
     added = 0
+    invited_emails: list[str] = []
     # Prefetch every user and existing link this file can touch in two
     # queries, instead of two per row.
     emails = {row["email"].lower() for row in rows if row["email"]}
@@ -227,9 +255,11 @@ async def bulk_add_collaborators(
             continue
 
         added += 1
+        invited_emails.append(email)
         results.append(BulkCollaboratorResult(email=email, status="added", permission=permission))
 
     db.commit()
+    _publish_guest_invited(event, invited_emails)
 
     return BulkImportResponse(
         total_rows=len(rows),
@@ -273,6 +303,7 @@ def add_collaborator(
         raise HTTPException(status_code=400, detail=detail)
 
     db.commit()
+    _publish_guest_invited(event, [email])
     return AddCollaboratorResponse(user_id=target_user.id, email=email, permission=permission)
 
 
