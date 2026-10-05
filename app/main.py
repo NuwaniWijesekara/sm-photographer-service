@@ -42,9 +42,9 @@ class CollaboratorPermission(str, enum.Enum):
 
 class User(Base):
     """The single, unified account table — every user (event creator or
-    collaborator) is a row here. `email`/`password_hash` are nullable to
-    accommodate anonymous instant-access sessions, which get a row with
-    neither set."""
+    collaborator) is a row here. `email`/`password_hash` are nullable for
+    Google-only accounts and collaborator invite placeholders. `is_anonymous`
+    is legacy: anonymous sessions were removed, but old rows still carry it."""
     __tablename__ = "users"
     id             = Column(String, primary_key=True, default=_uuid)
     name           = Column(String, nullable=True)

@@ -73,19 +73,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token(user)
     return {"access_token": token, "token_type": "bearer"}
 
-@router.post("/anonymous", response_model=Token)
-def login_anonymous(db: Session = Depends(get_db)):
-    """Instant-access session — no email/password. Lets a QR-scanning guest
-    start searching photos immediately; they can register/link an email later
-    without losing their id (see `sub` in the issued token)."""
-    from ..main import User
-    user = User(is_anonymous=True)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    token = create_access_token(user)
-    return {"access_token": token, "token_type": "bearer"}
-
 @router.post("/google", response_model=Token)
 def login_google(data: GoogleLoginRequest, db: Session = Depends(get_db)):
     from ..main import User
