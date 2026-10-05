@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     frontend_public_url: str = "http://localhost:3000"
     # Redis Stream consumed by sm-notification-service.
     guest_invited_stream: str = "guest.invited"
+    # Delivery receipts from sm-notification-service → event_collaborators.email_status.
+    # Keep the consumer name stable across restarts: unacked messages are
+    # retried from this consumer's pending list on startup.
+    email_sent_stream:         str = "guest.email_sent"
+    email_sent_consumer_group: str = "photographer-email-status"
+    email_sent_consumer_name:  str = "photographer-1"
     api_gateway_url:    str = "http://api-gateway:8000"
     google_client_id:   str = ""
     # Lifetime of presigned photo URLs in the owner gallery (same default as
