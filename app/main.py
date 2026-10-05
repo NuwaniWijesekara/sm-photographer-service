@@ -91,6 +91,10 @@ class EventCollaborator(Base):
     event_id   = Column(String, ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     permission = Column(SAEnum(CollaboratorPermission), nullable=False, default=CollaboratorPermission.VIEW_ONLY)
+    # Invitation email delivery: PENDING until sm-notification-service
+    # reports a successful send (guest.email_sent stream → SENT, see
+    # services/email_status_consumer.py). Plain string, like access_mode.
+    email_status = Column(String, nullable=False, default="PENDING", server_default="PENDING")
     created_at = Column(DateTime, default=datetime.utcnow)
     event      = relationship("Event", back_populates="collaborators")
     user       = relationship("User")
@@ -194,10 +198,16 @@ async def lifespan(app: FastAPI):
                 END IF;
             END $$;
         """))
+        # ── Invitation email delivery status (guest.email_sent consumer) ──
+        conn.execute(text("ALTER TABLE event_collaborators ADD COLUMN IF NOT EXISTS email_status VARCHAR NOT NULL DEFAULT 'PENDING';"))
         conn.commit()
     Base.metadata.create_all(bind=engine)
+
+    from .services.email_status_consumer import email_status_consumer
+    email_status_consumer.start()
     print("✓ Photographer service running on :8001")
     yield
+    email_status_consumer.stop()
 
 app = FastAPI(title="ScanMe — Photographer BFF", version="1.0.0", lifespan=lifespan)
 
